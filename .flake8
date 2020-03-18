@@ -1,0 +1,8 @@
+[flake8]
+ignore =
+	# Ignore too-long lines; hard to do for string literals,
+	# and autopep8 tries to break up lines for us anyway
+	E501
+	# Ignore binary expressions before and after linebreaks; autopep8 does this
+	W504
+	W503
