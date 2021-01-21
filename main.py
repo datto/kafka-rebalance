@@ -1,7 +1,8 @@
-# This file is part of kafka-rebalance.
-#
+#!/usr/bin/env python3
+
 # Copyright © 2020 Datto, Inc.
 # Author: Alex Parrill <aparrill@datto.com>
+# Author: John Seekins <jseekins@datto.com>
 #
 # Licensed under the GNU General Public License Version 3
 # Fedora-License-Identifier: GPLv3+
@@ -20,22 +21,22 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with kafka-rebalance.  If not, see <https://www.gnu.org/licenses/>.
-#
 
-
-from io import StringIO
-from kafka import KafkaAdminClient
-from rebalance_core import plan, PlanSettings
 import argparse
 from argparse import ArgumentDefaultsHelpFormatter
+from io import StringIO
 import json
+from kafka import KafkaAdminClient
+from lib.connections import fetch, gen_reassignment_file, exec_reassign
+from lib.rebalance import plan, PlanSettings
 import logging
+import os
+from pprint import pformat
 import random
 import sys
 
-from kafka_rebalance import fetch, gen_reassignment_file, exec_reassign
-
 LOG = logging.getLogger(__name__)
+SCRIPTDIR = os.path.dirname(os.path.realpath(__file__))
 
 
 def main():
@@ -47,7 +48,7 @@ def main():
     parser.add_argument(
         "bootstrap_server",
         help="Kafka bootstrap server (<server:port>)")
-    parser.add_argument("-i", "--iterations", type=int, default=10,
+    parser.add_argument("-i", "--iterations", type=int, default=20,
                         help="Maximum number of partitions to move.")
     parser.add_argument(
         "-p",
@@ -68,7 +69,7 @@ def main():
     parser.add_argument(
         "--net-throttle",
         type=int,
-        default=100000,
+        default=40000000,
         help="Limit transfer between brokers by this amount, in bytes/sec")
     parser.add_argument(
         "--disk-throttle",
@@ -85,8 +86,13 @@ def main():
 
     logging.basicConfig(level=logging.INFO)
     if args.verbose and args.verbose >= 1:
+        logging.basicConfig(level=logging.DEBUG)
         logging.getLogger("kafka_rebalance").setLevel(logging.DEBUG)
         logging.getLogger("rebalance_core").setLevel(logging.DEBUG)
+
+    if os.path.exists("{}/reassign.json".format(SCRIPTDIR)):
+        LOG.info("Reassignment JSON exists. Is a reassignment already running?")
+        exit(0)
 
     settings = PlanSettings(
         max_iters=args.iterations,
@@ -112,19 +118,22 @@ def main():
 
     for replica in moving_partitions:
         LOG.info(
-            "Moving %s-%s from %s to %s",
-            replica.topic,
-            replica.id,
-            replica.initial_owner,
-            replica.planned_owner)
+            "Moving {}-{} from {} to {}".format(
+                replica.topic,
+                replica.id,
+                replica.initial_owner,
+                replica.planned_owner))
 
     json_file = StringIO()
     json.dump(gen_reassignment_file(partitions, moving_partitions), json_file)
-    LOG.info("JSON reassignment file: %s", json_file.getvalue())
+    LOG.info("JSON reassignment file: {}".format(pformat(json_file.getvalue())))
 
     if args.dry_run:
         LOG.info("Dry run complete, run without -d/--dry-run to execute")
         return sys.exit(0)
+
+    with open("{}/reassign.json".format(SCRIPTDIR), "w") as f_out:
+        f_out.write(json_file.getvalue())
 
     work_broker = random.choice(brokers)
     if not exec_reassign(
@@ -134,6 +143,11 @@ def main():
             args.net_throttle,
             args.disk_throttle):
         return sys.exit(1)
+
+    try:
+        os.unlink("{}/reassign.json".format(SCRIPTDIR))
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

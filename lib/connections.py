@@ -1,7 +1,6 @@
-# This file is part of kafka-rebalance.
-#
 # Copyright © 2020 Datto, Inc.
 # Author: Alex Parrill <aparrill@datto.com>
+# Author: John Seekins <jseekins@datto.com>
 #
 # Licensed under the GNU General Public License Version 3
 # Fedora-License-Identifier: GPLv3+
@@ -20,11 +19,10 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with kafka-rebalance.  If not, see <https://www.gnu.org/licenses/>.
-#
 
 
 from fabric import Connection
-from rebalance_core import Node as ReNode, Item as ReItem
+from lib.rebalance import Node as ReNode, Item as ReItem
 from shlex import quote
 from time import sleep, gmtime, strftime
 import itertools
@@ -36,10 +34,9 @@ __all__ = [
     "Broker",
     "Disk",
     "PartitionReplica",
-    "fetch_nodes"
 ]
 
-LOG = logging.getLogger(__name__)
+LOG = logging.getLogger("kafka_rebalance")
 
 
 class Broker:
@@ -70,12 +67,14 @@ class Broker:
         return False
 
     def fetch_disks(self, disk_glob):
-        LOG.info("Fetching disk usage on %s", self.ssh.host)
+        LOG.info("Fetching disk usage on {}".format(self.ssh.host))
+        disk_query = "df -l --output=target,size,used | grep \"{}\"".format(disk_glob)
+        LOG.debug("Disk query: {}".format(disk_query))
         out = self.ssh.run(
-            "df -l --output=target,size,used -- " +
-            disk_glob,
+            disk_query,
             hide="stdout",
             in_stream=False).stdout
+        LOG.debug("Mounts discovered: {}".format(out))
         disks = []
         for (i, line) in enumerate(out.splitlines()):
             if i == 0:
@@ -99,10 +98,10 @@ class Disk(ReNode):
 
     def fetch_replicas(self, partitions):
         LOG.info(
-            "Fetching partition usage in %s:%s",
-            self.broker.ssh.host,
-            self.mount_point)
-
+            "Fetching partition usage in {}:{}".format(
+                self.broker.ssh.host,
+                self.mount_point))
+        LOG.debug("checking disk usage on {}".format(self.mount_point))
         out = self.broker.ssh.run(
             "find " +
             quote(
@@ -135,9 +134,9 @@ class Disk(ReNode):
                 replica_id = owning_brokers.index(self.broker.id)
             except ValueError:
                 LOG.warn(
-                    "Dir for %s exists on broker %s but broker is not in the partition's replica list",
-                    key,
-                    self.broker)
+                    "Dir for {} exists on broker {} but broker is not in the partition's replica list".format(
+                        key,
+                        self.broker))
                 continue
 
             replicas.append(PartitionReplica(
@@ -201,6 +200,7 @@ def fetch(kafka_admin, disk_glob, ssh_args):
     LOG.info("Fetching broker info")
     brokers = []
     for broker in kafka_admin.describe_cluster()["brokers"]:
+        LOG.debug("Collecting data on {}".format(broker))
         broker = Broker(
             broker["node_id"],
             broker["host"],
@@ -230,12 +230,19 @@ def gen_reassignment_file(partitions, moved_replicas):
 
     json_items = []
     for ((topic, partition), (replicas, log_dirs)) in new_assignments.items():
-        json_items.append({
-            "topic": topic,
-            "partition": partition,
-            "replicas": replicas,
-            "log_dirs": log_dirs
-        })
+        """
+        This is a hack because I find this code inscrutable...
+        Basically, we can't have more than one replica on the same node,
+        so ensuring that the replica list doesn't have any duplicates
+        prevents that error
+        """
+        if len(replicas) == len(set(replicas)):
+            json_items.append({
+                "topic": topic,
+                "partition": partition,
+                "replicas": replicas,
+                "log_dirs": log_dirs
+            })
     return {
         "version": 1,
         "partitions": json_items
@@ -281,13 +288,13 @@ def exec_reassign(
     finished_failures = 0
     if wait:
         for spinner_char in itertools.cycle("/-\\|"):
-            print("\rWaiting for completion [{}]".format(
-                spinner_char), end="")
             verify_output = ssh.run(
                 verify_cmdline, in_stream=False, hide="both")
+            still_running = [line for line in verify_output.stdout.split("\n") if "in progress" in line]
+            print("\n{}\n{} partitions still processing".format("\n".join(still_running), len(still_running)))
             if "in progress" in verify_output.stdout:
                 # Not done yet, keep waiting
-                sleep(5)
+                sleep(60)
                 finished_failures = 0
             else:
                 if "failed" in verify_output.stdout:
@@ -298,12 +305,11 @@ def exec_reassign(
                         break
                 else:
                     break
-        print("")
 
         if "failed" in verify_output.stdout:
             LOG.warn(
-                "One or more partitions or replicas failed to move. Output:\n%s",
-                verify_output)
+                "One or more partitions or replicas failed to move. Output:\n{}".format(
+                    verify_output))
             return False
         else:
             return True
