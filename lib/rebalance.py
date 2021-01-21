@@ -27,7 +27,7 @@ import logging
 
 LOG = logging.getLogger("rebalance_core")
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 
 class Node(ABC):
