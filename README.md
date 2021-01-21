@@ -44,20 +44,29 @@ Installation
   * python3-decorator
   * python3-kafka
 
-* Requirements (pip)
+* Requirements (pip) *listed in requirements.txt*
   * fabric
   * decorator
   * kafka-python
 
+## Installing with virtualenv
+
+  * `apt-get install -y python3-virtualenv`
+  * `virtualenv $(pwd)`
+  * `source $(pwd)/bin/activate`
+  * `pip install -r requirements.txt`
+
+## Running with virtualenv
+
+  * `source $(pwd)/bin/activate`
+  * `python main.py`
+
 ## Installing through pyenv
 
-  * apt-get install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
-libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev \
-xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
-  * curl https://pyenv.run | PYENV_ROOT=$(pwd)/.pyenv bash
-  * PYENV_ROOT=$(pwd)/.pyenv .pyenv/bin/pyenv install 3.6.8
-  * $(pwd)/.pyenv/versions/3.6.8/bin/pip install --upgrade pip
-  * $(pwd)/.pyenv/versions/3.6.8/bin/pip install fabric decorator kafka-python
+  * `apt-get install -y build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git`
+  * `curl https://pyenv.run | PYENV_ROOT=$(pwd)/.pyenv bash`
+  * `PYENV_ROOT=$(pwd)/.pyenv .pyenv/bin/pyenv install 3.6.8 # any version > 3.6 will work`
+  * `$(pwd)/.pyenv/versions/3.6.8/bin/pip install -r requirements.txt`
 
 ## Running with pyenv
 
