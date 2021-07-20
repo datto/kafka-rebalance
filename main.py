@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 # Copyright © 2020 Datto, Inc.
 # Author: Alex Parrill <aparrill@datto.com>
 # Author: John Seekins <jseekins@datto.com>
@@ -24,7 +23,6 @@
 
 import argparse
 from argparse import ArgumentDefaultsHelpFormatter
-from io import StringIO
 import json
 from kafka import KafkaAdminClient
 from lib.connections import fetch, gen_reassignment_file, exec_reassign
@@ -33,7 +31,6 @@ import logging
 import os
 from pprint import pformat
 import random
-import sys
 
 LOG = logging.getLogger(__name__)
 SCRIPTDIR = os.path.dirname(os.path.realpath(__file__))
@@ -77,10 +74,9 @@ def main():
         default=200000000,
         help="Limit transfer between disks on the same brokers by this amount, in bytes/set")
     parser.add_argument(
-        "-w",
-        "--wait",
+        "--no-wait",
         action="store_true",
-        help="Wait for rebalancing to finish. Default is to return after starting transfer")
+        help="Don't wait for rebalancing to finish. Default is to watch for results from remote host")
 
     args = parser.parse_args()
 
@@ -124,25 +120,25 @@ def main():
                 replica.initial_owner,
                 replica.planned_owner))
 
-    json_file = StringIO()
-    json.dump(gen_reassignment_file(partitions, moving_partitions), json_file)
-    LOG.info("JSON reassignment file: {}".format(pformat(json_file.getvalue())))
+    json_data = gen_reassignment_file(partitions, moving_partitions)
+    LOG.info("JSON reassignment data: {}".format(pformat(json_data)))
 
     if args.dry_run:
         LOG.info("Dry run complete, run without -d/--dry-run to execute")
-        return sys.exit(0)
+        exit(0)
 
     with open("{}/reassign.json".format(SCRIPTDIR), "w") as f_out:
-        f_out.write(json_file.getvalue())
+        json.dump(json_data, f_out)
 
     work_broker = random.choice(brokers)
     if not exec_reassign(
-            json_file,
+            json_data,
             work_broker,
             args.zookeeper_server,
             args.net_throttle,
-            args.disk_throttle):
-        return sys.exit(1)
+            args.disk_throttle,
+            not args.no_wait):
+        exit(1)
 
     try:
         os.unlink("{}/reassign.json".format(SCRIPTDIR))

@@ -3,6 +3,8 @@
 
 Automatically moves partition replicas across disks and brokers using the `kafka-reassign-partitions.sh` binary, to balance out disk usage and improve utilization.
 
+When providing bootstrap hosts, it's strongly recommended you use IPs rather than DNS names. This helps avoid any DNS resolution problems during connections to different systems (zk/kafka).
+
 # General program options
 
 ```
@@ -12,8 +14,8 @@ usage: main.py [-h] [-i ITERATIONS] [-p PARTITION_PERCENTAGE] [-P DISK_PERCENTAG
                zookeeper_server bootstrap_server
 
 positional arguments:
-  zookeeper_server      Kafka zookeeper server (<server:port>)
-  bootstrap_server      Kafka bootstrap server (<server:port>)
+  zookeeper_server      Kafka zookeeper server (<ip:port>)
+  bootstrap_server      Kafka bootstrap server (<ip:port>)
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -44,29 +46,20 @@ Installation
   * python3-decorator
   * python3-kafka
 
-* Requirements (pip) *listed in requirements.txt*
+* Requirements (pip)
   * fabric
   * decorator
   * kafka-python
 
-## Installing with virtualenv
-
-  * `apt-get install -y python3-virtualenv`
-  * `virtualenv $(pwd)`
-  * `source $(pwd)/bin/activate`
-  * `pip install -r requirements.txt`
-
-## Running with virtualenv
-
-  * `source $(pwd)/bin/activate`
-  * `python main.py`
-
 ## Installing through pyenv
 
-  * `apt-get install -y build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git`
-  * `curl https://pyenv.run | PYENV_ROOT=$(pwd)/.pyenv bash`
-  * `PYENV_ROOT=$(pwd)/.pyenv .pyenv/bin/pyenv install 3.6.8 # any version > 3.6 will work`
-  * `$(pwd)/.pyenv/versions/3.6.8/bin/pip install -r requirements.txt`
+  * apt-get install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
+libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev \
+xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
+  * curl https://pyenv.run | PYENV_ROOT=$(pwd)/.pyenv bash
+  * PYENV_ROOT=$(pwd)/.pyenv .pyenv/bin/pyenv install 3.6.8
+  * $(pwd)/.pyenv/versions/3.6.8/bin/pip install --upgrade pip
+  * $(pwd)/.pyenv/versions/3.6.8/bin/pip install fabric decorator kafka-python
 
 ## Running with pyenv
 

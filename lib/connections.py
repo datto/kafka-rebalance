@@ -20,16 +20,19 @@
 # You should have received a copy of the GNU General Public License
 # along with kafka-rebalance.  If not, see <https://www.gnu.org/licenses/>.
 
-
 from fabric import Connection
+from io import StringIO
+import itertools
+import json
 from lib.rebalance import Node as ReNode, Item as ReItem
+import logging
+from pprint import pformat
+import random
+import re
 from shlex import quote
 from time import sleep, gmtime, strftime
-import itertools
-import logging
-import re
 
-__version__ = '0.1.1'
+__version__ = '0.1.0'
 __all__ = [
     "Broker",
     "Disk",
@@ -215,34 +218,108 @@ def fetch(kafka_admin, disk_glob, ssh_args):
     return (partitions, brokers)
 
 
+def _find_new_position(replicas, new_id, new_position, old_id):
+    if old_id in replicas:
+        # if the old replica is in the list, well..just leave it alone
+        return replicas.index(old_id)
+    if replicas.count(new_id) < 2:
+        # if we only have one position, just don't put the old replica in that position
+        positions = [x for x, item in enumerate(replicas) if x != new_position]
+        return random.choice(positions)
+    if new_id not in replicas and old_id not in replicas:
+        # if neither item is in the list (how?!) we'll just pick a position
+        return 0
+    """
+    default assumption is two instances of the new item and no
+    instances of the old id. We pick a location that isn't the new
+    location but _is_ the new value.
+    """
+    positions = [x for x, item in enumerate(replicas) if item == new_id and x != new_position]
+    return random.choice(positions)
+
+
 def gen_reassignment_file(partitions, moved_replicas):
     new_assignments = {}
     for item in moved_replicas:
-        if (item.topic, item.id) not in new_assignments:
-            _, initial_replica_nodes = partitions[(item.topic, item.id)]
-            new_assignments[(item.topic, item.id)] = (
-                list(initial_replica_nodes),
-                ["any"] * len(initial_replica_nodes)
-            )
-        replica_nodes, log_dirs = new_assignments[(item.topic, item.id)]
-        replica_nodes[item.replica_id] = item.planned_owner.broker.id
-        log_dirs[item.replica_id] = item.planned_owner.mount_point.rstrip("/")
+        id_name = "{}-{}".format(item.topic, item.id)
+        _, initial_replica_nodes = partitions[(item.topic, item.id)]
+        if id_name not in new_assignments:
+            """
+            Create a new object for moving...
+            start with all partitions/log dirs in their "current" locations
+            and simply update those than need to change
+            We'll also potentially move the "old" replica off a node
+            to ensure replicas are balanced across nodes as well as disks
+            log_dirs can be largely left as "any" except when enforcing
+            a disk-level move, so we won't try and track those
+            """
+            replicas = list(initial_replica_nodes)
+            old_replica = replicas[item.replica_id]
+            replicas[item.replica_id] = item.planned_owner.broker.id
+            old_replica_pos = _find_new_position(replicas, item.planned_owner.broker.id,
+                                                 item.replica_id, old_replica)
+            replicas[old_replica_pos] = old_replica
+
+            log_dirs = ["any"] * len(initial_replica_nodes)
+            log_dirs[item.replica_id] = item.planned_owner.mount_point.rstrip("/")
+            new_assignments[id_name] = {
+                "topic": item.topic,
+                "partition": item.id,
+                "replicas": replicas,
+                "original_replicas": list(initial_replica_nodes),
+                "log_dirs": log_dirs,
+            }
+        else:
+            old_replica = new_assignments[id_name]["replicas"][item.replica_id]
+            new_assignments[id_name]["replicas"][item.replica_id] = item.planned_owner.broker.id
+            old_replica_pos = _find_new_position(new_assignments[id_name]["replicas"], item.planned_owner.broker.id,
+                                                 item.replica_id, old_replica)
+            replicas[old_replica_pos] = old_replica
+            new_assignments[id_name]["log_dirs"][item.replica_id] = item.planned_owner.mount_point.rstrip("/")
+    """
+    An example add:
+    {'bfy-cass-use1-app-6': {'log_dirs': ['any', 'any', '/kafka/1'],
+                             'partition': 6,
+                             'replicas': [1, 0, 2],
+                             'topic': 'bfy-cass-use1-app'},
+     'opentsdb-metrics-10': {'log_dirs': ['any', 'any', '/kafka/0'],
+                             'partition': 10,
+                             'replicas': [1, 0, 2],
+                             'topic': 'opentsdb-metrics'},
+     'prometheus-dcs-production-4': {'log_dirs': ['any', '/kafka/5', 'any'],
+                                     'partition': 4,
+                                     'replicas': [1, 2, 0],
+                                     'topic': 'prometheus-dcs-production'},
+     'saas-use1-sys-0': {'log_dirs': ['any', 'any', '/kafka/0'],
+                         'partition': 0,
+                         'replicas': [0, 1, 2],
+                         'topic': 'saas-use1-sys'},
+     'storagenode-use1-sys-1': {'log_dirs': ['any', '/kafka/5', 'any'],
+                                'partition': 1,
+                                'replicas': [1, 2, 0],
+                                'topic': 'storagenode-use1-sys'},
+     'swift-cluster-sys-0': {'log_dirs': ['any', 'any', '/kafka/1'],
+                             'partition': 0,
+                             'replicas': [0, 1, 2],
+                             'topic': 'swift-cluster-sys'},
+     'unclassified-sys-1': {'log_dirs': ['any', '/kafka/2', 'any'],
+                            'partition': 1,
+                            'replicas': [0, 2, 1],
+                            'topic': 'unclassified-sys'}}
+    """
+    LOG.debug("Added replica data to be rebalanced: {}".format(pformat(new_assignments)))
 
     json_items = []
-    for ((topic, partition), (replicas, log_dirs)) in new_assignments.items():
-        """
-        This is a hack because I find this code inscrutable...
-        Basically, we can't have more than one replica on the same node,
-        so ensuring that the replica list doesn't have any duplicates
-        prevents that error
-        """
-        if len(replicas) == len(set(replicas)):
+    for partition_data in new_assignments.values():
+        # if there are duplicates in the replica set list, we shouldn't process the move
+        if len(partition_data["replicas"]) == len(set(partition_data["replicas"])):
             json_items.append({
-                "topic": topic,
-                "partition": partition,
-                "replicas": replicas,
-                "log_dirs": log_dirs
+                "topic": partition_data["topic"],
+                "partition": partition_data["partition"],
+                "replicas": partition_data["replicas"],
+                "log_dirs": partition_data["log_dirs"],
             })
+
     return {
         "version": 1,
         "partitions": json_items
@@ -250,19 +327,26 @@ def gen_reassignment_file(partitions, moved_replicas):
 
 
 def exec_reassign(
-    json_file,
+    json_data,
     work_broker,
     zk_server,
     net_throttle,
     disk_throttle,
     wait=True
 ):
+    if len(json_data["partitions"]) < 1:
+        LOG.error("Cannot process reassignmentfile with empty partitions section: {}".format(pformat(json_data)))
+        return False
+    json_file = StringIO()
+    json.dump(json_data, json_file)
+
     ssh = work_broker.ssh
 
     filename = "/tmp/kafka-reassignment-{}.json".format(
         strftime("%Y.%m.%d.%H.%M.%S", gmtime()))
 
     ssh.put(json_file, filename)
+    LOG.info("Added {} to remote host for execution".format(filename))
     cmdline = "/opt/kafka/bin/kafka-reassign-partitions.sh" + \
         " --bootstrap-server " + quote("{}:{}".format(work_broker.host, work_broker.port)) + \
         " --zookeeper " + quote(zk_server) + \

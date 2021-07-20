@@ -20,14 +20,13 @@
 # You should have received a copy of the GNU General Public License
 # along with kafka-rebalance.  If not, see <https://www.gnu.org/licenses/>.
 
-
 from abc import ABC
 import statistics
 import logging
 
 LOG = logging.getLogger("rebalance_core")
 
-__version__ = "0.1.1"
+__version__ = "0.1.0"
 
 
 class Node(ABC):
