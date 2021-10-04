@@ -66,13 +66,13 @@ def main():
     parser.add_argument(
         "--net-throttle",
         type=int,
-        default=40000000,
+        default=5000000,
         help="Limit transfer between brokers by this amount, in bytes/sec")
     parser.add_argument(
         "--disk-throttle",
         type=int,
-        default=200000000,
-        help="Limit transfer between disks on the same brokers by this amount, in bytes/set")
+        default=75000000,
+        help="Limit transfer between disks on the same brokers by this amount, in bytes/sec")
     parser.add_argument(
         "--no-wait",
         action="store_true",
